@@ -2,11 +2,6 @@ pipeline {
 
     agent any
 
-    environment {
-        IMAGE_NAME = "employee-management"
-        CONTAINER_NAME = "employee-app"
-    }
-
     stages {
 
         stage('Checkout') {
@@ -28,29 +23,17 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Docker Compose Build') {
             steps {
-                sh 'docker build -t ${IMAGE_NAME}:latest .'
+                sh 'docker compose build'
             }
         }
 
-        stage('Stop Old Container') {
+        stage('Deploy using Docker Compose') {
             steps {
                 sh '''
-                docker stop ${CONTAINER_NAME} || true
-                docker rm ${CONTAINER_NAME} || true
-                '''
-            }
-        }
-
-        stage('Deploy Container') {
-            steps {
-                sh '''
-                docker run -d \
-                  --name ${CONTAINER_NAME} \
-                  -p 8081:8081 \
-                  --network host \
-                  ${IMAGE_NAME}:latest
+                docker compose down
+                docker compose up -d
                 '''
             }
         }
@@ -58,8 +41,23 @@ pipeline {
         stage('Health Check') {
             steps {
                 sh '''
-                sleep 20
-                curl http://localhost:8081/actuator/health
+                echo "Waiting for application to start..."
+
+                for i in {1..12}
+                do
+                    STATUS=$(curl -s http://localhost:8081/actuator/health | grep -o '"status":"UP"' || true)
+
+                    if [ "$STATUS" = '"status":"UP"' ]; then
+                        echo "Application is UP!"
+                        exit 0
+                    fi
+
+                    echo "Waiting... ($i/12)"
+                    sleep 10
+                done
+
+                echo "Application failed health check!"
+                exit 1
                 '''
             }
         }
@@ -68,13 +66,21 @@ pipeline {
     post {
 
         success {
-            echo 'Application deployed successfully!'
+            echo '========================================='
+            echo 'CI/CD Pipeline completed successfully!'
+            echo 'Application deployed using Docker Compose'
+            echo '========================================='
         }
 
         failure {
-            echo 'Deployment failed!'
+            echo '========================================='
+            echo 'CI/CD Pipeline FAILED!'
+            echo 'Check the Console Output for details.'
+            echo '========================================='
         }
 
+        always {
+            sh 'docker compose ps || true'
+        }
     }
-
 }
